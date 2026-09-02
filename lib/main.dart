@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:call_log/call_log.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
@@ -247,10 +248,222 @@ class _ExportHomePageState extends State<ExportHomePage> {
     );
   }
 
+  Future<void> _importContactsFromFile() async {
+    try {
+      final pickedFile = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+
+      if (pickedFile == null || pickedFile.path == null) {
+        return;
+      }
+
+      setState(() {
+        _isBusy = true;
+        _status = 'جار استيراد جهات الاتصال...';
+      });
+
+      final perm = await FlutterContacts.permissions.request(
+        PermissionType.readWrite,
+      );
+      if (perm != PermissionStatus.granted &&
+          perm != PermissionStatus.limited) {
+        throw StateError('لم يتم منح صلاحية كتابة جهات الاتصال.');
+      }
+
+      final file = File(pickedFile.path!);
+      final jsonString = await file.readAsString();
+      final dynamic decoded = jsonDecode(jsonString);
+
+      List<dynamic> rawContacts = [];
+      if (decoded is List) {
+        rawContacts = decoded;
+      } else if (decoded is Map) {
+        if (decoded['contacts'] is List &&
+            (decoded['contacts'] as List).isNotEmpty) {
+          rawContacts = decoded['contacts'] as List;
+        } else if (decoded['contactsNameNumberIndex'] is List &&
+            (decoded['contactsNameNumberIndex'] as List).isNotEmpty) {
+          rawContacts = decoded['contactsNameNumberIndex'] as List;
+        }
+      }
+
+      if (rawContacts.isEmpty) {
+        throw const FormatException('لم يتم العثور على أي جهات اتصال في الملف.');
+      }
+
+      int successCount = 0;
+      int failedCount = 0;
+
+      for (final item in rawContacts) {
+        try {
+          final contact = _parseContact(item);
+          final hasName =
+              contact.name != null &&
+              ((contact.name!.first?.isNotEmpty ?? false) ||
+                  (contact.name!.last?.isNotEmpty ?? false));
+          final hasPhone = contact.phones.isNotEmpty;
+
+          if (hasName || hasPhone) {
+            await FlutterContacts.create(contact);
+            successCount++;
+          }
+        } catch (_) {
+          failedCount++;
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _status = 'تم استيراد $successCount جهة اتصال'
+            '${failedCount > 0 ? " (فشل $failedCount)" : ""}';
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'تم استيراد $successCount جهة اتصال بنجاح'
+            '${failedCount > 0 ? " وتعذر استيراد $failedCount" : ""}.',
+          ),
+        ),
+      );
+    } on PlatformException catch (error) {
+      _showFailure(error.message ?? error.code);
+    } catch (error) {
+      _showFailure(error.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _isBusy = false);
+      }
+    }
+  }
+
+  Contact _parseContact(dynamic raw) {
+    if (raw is! Map) {
+      throw const FormatException('بيانات جهة الاتصال غير صالحة.');
+    }
+
+    try {
+      return Contact.fromJson(raw);
+    } catch (_) {
+      final map = Map<String, dynamic>.from(raw);
+
+      Name? name;
+      if (map['name'] is Map) {
+        final nameMap = Map<String, dynamic>.from(map['name'] as Map);
+        name = Name(
+          first: nameMap['first']?.toString() ?? '',
+          last: nameMap['last']?.toString() ?? '',
+          middle: nameMap['middle']?.toString() ?? '',
+          prefix: nameMap['prefix']?.toString() ?? '',
+          suffix: nameMap['suffix']?.toString() ?? '',
+          nickname: nameMap['nickname']?.toString() ?? '',
+        );
+      } else if (map['displayName'] != null) {
+        name = Name(first: map['displayName'].toString());
+      }
+
+      final phones = <Phone>[];
+      if (map['phones'] is List) {
+        for (final p in map['phones'] as List) {
+          if (p is Map) {
+            final pMap = Map<String, dynamic>.from(p);
+            final number = pMap['number']?.toString() ?? '';
+            if (number.trim().isNotEmpty) {
+              final label = _matchPhoneLabel(
+                pMap['label']?.toString().toLowerCase(),
+              );
+              final customLabel = pMap['customLabel']?.toString();
+              phones.add(
+                Phone(
+                  number: number,
+                  label: Label(label, customLabel),
+                ),
+              );
+            }
+          } else if (p is String && p.trim().isNotEmpty) {
+            phones.add(Phone(number: p.trim()));
+          }
+        }
+      }
+
+      final emails = <Email>[];
+      if (map['emails'] is List) {
+        for (final e in map['emails'] as List) {
+          if (e is Map) {
+            final eMap = Map<String, dynamic>.from(e);
+            final address = eMap['address']?.toString() ?? '';
+            if (address.trim().isNotEmpty) {
+              final label = _matchEmailLabel(
+                eMap['label']?.toString().toLowerCase(),
+              );
+              final customLabel = eMap['customLabel']?.toString();
+              emails.add(
+                Email(
+                  address: address,
+                  label: Label(label, customLabel),
+                ),
+              );
+            }
+          } else if (e is String && e.trim().isNotEmpty) {
+            emails.add(Email(address: e.trim()));
+          }
+        }
+      }
+
+      return Contact(
+        name: name,
+        phones: phones,
+        emails: emails,
+      );
+    }
+  }
+
+  PhoneLabel _matchPhoneLabel(String? label) {
+    switch (label) {
+      case 'home':
+        return PhoneLabel.home;
+      case 'work':
+        return PhoneLabel.work;
+      case 'main':
+        return PhoneLabel.main;
+      case 'workfax':
+      case 'work_fax':
+        return PhoneLabel.workFax;
+      case 'homefax':
+      case 'home_fax':
+        return PhoneLabel.homeFax;
+      case 'pager':
+        return PhoneLabel.pager;
+      case 'other':
+        return PhoneLabel.other;
+      case 'custom':
+        return PhoneLabel.custom;
+      case 'mobile':
+      default:
+        return PhoneLabel.mobile;
+    }
+  }
+
+  EmailLabel _matchEmailLabel(String? label) {
+    switch (label) {
+      case 'work':
+        return EmailLabel.work;
+      case 'other':
+        return EmailLabel.other;
+      case 'custom':
+        return EmailLabel.custom;
+      case 'home':
+      default:
+        return EmailLabel.home;
+    }
+  }
+
   void _showFailure(String message) {
     if (!mounted) return;
     setState(() {
-      _status = 'تعذر الاستخراج';
+      _status = 'تعذر الاستخراج أو الاستيراد';
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -315,6 +528,14 @@ class _ExportHomePageState extends State<ExportHomePage> {
               style: OutlinedButton.styleFrom(
                 minimumSize: const Size.fromHeight(52),
               ),
+            ),
+            const SizedBox(height: 24),
+            const Divider(),
+            const SizedBox(height: 12),
+            _ActionButton(
+              icon: Icons.file_upload_outlined,
+              label: 'استيراد جهات الاتصال من ملف JSON',
+              onPressed: _isBusy ? null : _importContactsFromFile,
             ),
           ],
         ),

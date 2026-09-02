@@ -1,17 +1,17 @@
 # ContactCallExporter
 
-A new Flutter project.
+Local Android application built with Flutter to export and restore contacts and call history.
+
+## Features
+
+- **Export Contacts**: Extracts contacts and metadata to formatted JSON files locally on the device.
+- **Export Call Logs**: Extracts incoming, outgoing, and missed call logs with timestamps.
+- **Restore / Import Contacts**: Reads an exported JSON file and creates contacts directly into the device's native address book.
+- **Local Sharing**: Share exported JSON files securely without cloud dependency.
 
 ## Getting Started
 
-This project is a starting point for a Flutter application.
+1. Ensure Flutter is installed and configured.
+2. Run `flutter pub get` to install dependencies.
+3. Run `flutter run` on an Android device or emulator.
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
